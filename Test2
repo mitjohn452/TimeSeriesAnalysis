@@ -1,1 +1,447 @@
+---
+title: "SP25 D-590 Project Part2"
+author: "Adam Holtzlander, Michael T Johnson and Wade Lail"
+output:
+  html_document:
+    fig_height: 5
+    fig_width: 8
+    toc: yes
+    toc_depth: 1
+    toc_float:
+      collapsed: false
+    number_sections: false
+    theme: readable
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(lubridate)
+library(tsibble)
+library(fpp3)
+library(fable)
+library(fabletools)
+library(tseries)
+library(forecast)
+library(xts)
+library(tidyverse)
+library(ggfortify)
+library(tsbox)
+library(dplyr)
+library(zoo)
+library(fredr)
+library(ggplot2)
+fredr_set_key("ce46937f10cba232e2a383786dfac7ba")
+options(digits=4)
+knitr::opts_chunk$set(echo = TRUE)
+#knitr::opts_knit$set(root.dir = "C://Users//wdlai//Documents//IUB//Project//")
+```
+
+# Project Description: 
+Analyze multiple datasets available from the Bureau of Labor Statistics (BLS) and FRED to identify relationships, if any, between their data and to find the best models for predictions.  The datasets from BLS include Unemployment & Earnings.  The S&P dataset is sourced from FRED.
+
+Notes:  Please adjust knitr::opts_knit$set(root.dir = ...) in chunk "rsetup" above to point to your repository for the code and data.
+
+# 1 Unemployment
+
+```{r}
+# load Unemployment Rate file (UNRATE) from UNRATE.csv   
+unrate <- read.csv("UNRATE.csv")
+head(unrate)
+```
+
+```{r}
+# convert observation_date to date class column obs_date and UNRATE to numeric (dbl)
+unrate$obs_date <- as.Date(unrate$observation_date,format="%m/%d/%Y")
+unrate$UNRATE <- as.numeric(unrate$UNRATE)
+head(unrate)
+```
+
+```{r}
+# convert unrate series to unrate_xts time series, 
+# removing the original character string column,  
+# "observation_date"
+unrate_xts <- as.xts(unrate[,-1], order.by = as.yearmon(unrate$obs_date))
+head(unrate_xts)
+```
+
+```{r}
+# transform xts to data frame
+df1 <- data.frame(Date = yearmonth(index(unrate_xts)), UNRATE = as.numeric(coredata(unrate_xts[,1])), 
+                  obs_date = coredata(unrate_xts[,2]))    
+df2 <- data.frame(Date = yearmonth(index(unrate_xts)), UNRATE = as.numeric(coredata(unrate_xts[,1])))    
+head(df1)
+head(df2)
+```
+```{r}
+# transform data frame to tsibble
+unrate_dfts1 <- as_tsibble(df1, index = Date)
+unrate_dfts2 <- as_tsibble(df2, index = Date)
+head(unrate_dfts1)
+head(unrate_dfts2)
+```
+```{r}
+# transform tsibble to ts
+unrate_ts1 <- as.ts(unrate_dfts1)
+unrate_ts2 <- as.ts(unrate_dfts2)
+head(unrate_ts1)
+head(unrate_ts2,24)
+```
+```{r}
+# display sample data and verify no gaps
+sum(is.na(unrate))
+sum(is.na(unrate_xts))
+sum(is.na(df1))
+sum(is.na(df2))
+sum(is.na(unrate_dfts1))
+sum(is.na(unrate_dfts2))
+sum(is.na(unrate_ts1))
+sum(is.na(unrate_ts2))
+```
+
+```{r}
+autoplot(unrate_ts2) + 
+    labs(title = "Unemployment Rate (%)",
+        x = "Date", 
+        y = "Unemployment Rate")
+
+```
+Note the typically modest changes per month, except for periods of major economic disturbances such as the "sub-prime mortgage crisis" starting in 2008 and the COVID pandemic starting in 2020.
+```{r}
+autoplot(acf(unrate_ts2))
+```
+These results are not surprising given the relatively small differences in the month to month values.
+
+```{r}
+unrate_dfts2 |> ACF(UNRATE) |>
+  autoplot() + labs(subtitle = "US unemployment monthly rate (in %)")
+# check ACF for differenced data
+unrate_dfts2 |> ACF(difference(UNRATE)) |>
+  autoplot() + labs(subtitle = "Changes in US unemployment monthly rate")
+```
+```{r}
+#  test for stationarity:
+adf.test(unrate_ts2)
+```
+p-value = 0.4 > 0.05 suggests we should fail to reject the null hypothesis and conclude the time series is stationary
+```{r}
+
+unrate_dfts2 |>
+  model(
+    STL(UNRATE ~ trend(window = 12) +
+                   season(window = "periodic"),
+    robust = TRUE)) |>
+  components() |>
+  autoplot()
+
+```
+COVID was definitely an outlier; otherwise, the residuals look like low variance white noise.
+There is definitely a lot of trending and the trend plot looks like just a smoother version of the original plot.
+The rougher ups and downs of the original plot are captured in the season year plot, but notice the difference in the scales of the 2 plots.  For the unemployment rate data, the major horizontal gridlines are 3 units apart, while the gridlines for the season_year plot are 0.02 units apart, suggesting a 150x change in scale.   
+```{r}
+my_dcmp_spec <- decomposition_model(
+   STL(UNRATE),
+   ETS(season_adjust ~ season("N"))
+)
+# Forecast to early 2027
+unrate_dfts2 |>
+  model(stl_ets = my_dcmp_spec) |>
+  forecast(h = "2 years") |>
+  autoplot(unrate_dfts2) +
+  labs(y = "Unemployment Rate %",
+       x = "Month",
+       title = "Unemployment Rate Past & Projected")
+```
+```{r}
+decomposed_model <- unrate_dfts2 |>
+  model(classical_decomposition(UNRATE, type = "additive"))
+components <- decomposed_model %>%
+  components()
+components %>%
+  autoplot() +
+  labs(y = "Unemployment Rate %",
+       x = "Month",
+       title = "Classical Additive Decomposition of US UnemploymentEarnings")
+```
+This Classical model shows less pronounced variation in the seasonal component compared to the STL-ETS model shown previously.  I suspect some of that is still reflected in the residuals.  Given the small scale of the seasonality component relative to the trend component, I wouldn't expect these differences to be material.
+
+```{r}
+fit <- unrate_dfts2 |>
+  model(drift = RW(UNRATE ~drift()))
+fit |>
+  forecast(h = "2 years") |>
+  autoplot(unrate_dfts2)
+
+```
+
+```{r}
+split_date <- as.Date("2023-01-01")
+train_unrate <- unrate_dfts2 |> filter(Date <= split_date)
+test_unrate <- unrate_dfts2 |> filter(Date > split_date)
+fit <- train_unrate |>
+  model(seasonal_model = SNAIVE(UNRATE ~ lag("year")))
+fit |> gg_tsresiduals()
+
+fc <- fit |>
+  forecast(new_data = anti_join(unrate_dfts2, train_unrate))
+fc |> autoplot(unrate_dfts2)
+
+bind_rows(
+  accuracy(fit),
+  accuracy(fc, unrate_dfts2)
+) |>
+  select(-.model)
+
+```
+
+
+
+# 2 Earnings
+
+```{r Autoplot}
+file_path <- "CES0500000016.txt"
+
+df1 <- read.table(file_path, header = FALSE, sep = "|", stringsAsFactors = FALSE, fill = TRUE, skip = 3)
+df1 <- df1 %>%
+  mutate(
+    Month = as.numeric(substr(trimws(V4), 2, 3)),
+    Date = make_date(year = V3, month = Month, day = 1)
+  )%>%
+filter(!is.na(V5))
+
+df1_1 <- df1 %>%
+  mutate(
+    Month = as.numeric(substr(trimws(V4), 2, 3)),
+    Date = make_date(year = V3, month = Month, day = 1)
+  )%>%
+filter(!is.na(V5)) %>%
+  select(Date, V5)
+
+distinct_years <- df1_1 %>%
+  mutate(Year = year(Date)) %>%
+  distinct(Year) %>%
+  arrange(Year)
+
+ggplot(df1_1, aes(x = Date, y = V5)) +
+  geom_line() +
+  ggtitle("Average Hourly Earnings of All Employees in Total Private Industries (in dollars)") +
+  xlab("Year") + 
+  ylab("Average Hourly Earnings") +
+  theme_minimal()
+```
+
+```{r 3.4 XTS, echo=FALSE}
+
+df1_1 <- df1 %>%
+  mutate(
+    Month = as.numeric(substr(trimws(V4), 2, 3)),
+    Date = make_date(year = V3, month = Month, day = 1)
+  ) %>%
+  filter(!is.na(V5)) %>%
+  select(Date, V5)
+
+xts_earnings <- xts(x = df1_1$V5, order.by = df1_1$Date)
+colnames(xts_earnings) <- "Earnings"
+
+acf_obj <- acf(xts_earnings, plot = FALSE)
+autoplot(acf_obj)
+```
+
+```{r 3.4 Decomposition, echo=FALSE}
+
+df_ts <- df1 %>%
+  as_tsibble(index = Date)
+
+df_ts_filled <- df_ts %>%
+  fill_gaps()
+
+df_ts_filled <- df_ts_filled %>%
+  fill(V5, .direction = "down")
+decomposed_model <- df_ts_filled %>%
+  model(classical_decomposition(V5, type = "additive"))
+components <- decomposed_model %>%
+  components()
+components %>%
+  autoplot() +
+  labs(title = "Classical Additive Decomposition of Total US Earnings")
+```
+```{r}
+#  test for stationarity:
+adf.test(df1_1$V5)
+```
+```{r 3.4 TS Model - ETS, echo=FALSE}
+df_ts1 <- df1 %>%
+  select(Date, V5) %>%
+  as_tsibble(index = Date)
+df_ts_filled1 <- df_ts1 %>%
+   fill_gaps() %>%
+fill(V5, .direction = "down") 
+model_ets <- df_ts_filled1 %>%
+  model(ETS(V5))
+forecast(model_ets, h = 365) %>%
+  autoplot()
+```
+
+```{r 3.4 TS Model - ARIMA, echo=FALSE}
+df_ts <- df1 %>%
+  as_tsibble(index = Date)
+df_ts_filled <- df_ts %>%
+  fill_gaps()
+df_ts_filled_isolated <- df_ts_filled %>%
+  select(Date, V5) %>%
+  as_tsibble(index = Date) %>% fill_gaps() %>%
+fill(V5, .direction = "down") 
+
+start_year <- year(min(df_ts_filled_isolated$Date))
+start_month <- month(min(df_ts_filled_isolated$Date))
+
+v5_ts <- ts(df_ts_filled_isolated$V5, start = c(start_year, start_month), frequency = 365)
+fit_arima <- auto.arima(v5_ts)
+forecast(fit_arima, h = 365) %>%
+  autoplot()
+```
+
+```{r}
+fit <- df_ts_filled_isolated |>
+  model(drift = RW(V5 ~drift()))
+fit |>
+  forecast(h = 365) |>
+  autoplot(df_ts_filled_isolated)
+```
+
+```{r}
+split_date <- as.Date("2023-01-01")
+train_earnings <- df_ts_filled_isolated |> filter(Date <= split_date)
+test_earning <- df_ts_filled_isolated |> filter(Date > split_date)
+fit <- train_earnings |>
+  model(seasonal_model = SNAIVE(V5 ~ lag("year")))
+fit |> gg_tsresiduals()
+```
+
+```{r}
+fc <- fit |>
+  forecast(new_data = anti_join(df_ts_filled_isolated, train_earnings))
+fc |> autoplot(df_ts_filled_isolated)
+
+bind_rows(
+  accuracy(fit),
+  accuracy(fc, df_ts_filled_isolated)
+) |>
+  select(-.model)
+```
+# 3 SP500
+```{r}
+sp500 <- fredr(series_id = "SP500",
+              observation_start = as.Date("2015-01-01"),
+              observation_end = Sys.Date())
+
+head(sp500)
+```
+
+
+```{r}
+# sp500 to xts
+sp500_xts <- as.xts(sp500[,-1], order.by = as.yearmon(sp500$date))
+head(sp500_xts)
+```
+```{r}
+# transform xts to data frame
+df <- data.frame(Date = yearmonth(index(sp500)), SP500 = as.numeric(coredata(sp500_xts$value)))    
+head(df)
+```
+
+```{r}
+# transform data frame to tsibble
+sp500_df <- as_tsibble(df, index = Date)
+head(sp500_df)
+```
+```{r}
+# transform tsibble to ts
+sp500_ts <- as.ts(sp500_df) 
+head(sp500_ts)
+```
+```{r}
+autoplot(sp500_ts) + 
+    labs(title = "S&P500 (USD)",
+        x = "Date", 
+        y = "Value")
+```
+
+```{r}
+#  test for stationarity:
+filled_sp500_ts <- na.interp(sp500_ts)
+adf.test(filled_sp500_ts)
+```
+p-value = 0.2 > 0.05 suggests we should fail to reject the null hypothesis and conclude the time series is stationary
+
+```{r}
+filled_sp500_df <- data.frame(Date = yearmonth(index(sp500)), SP500 = as.numeric(filled_sp500_ts[])) |>
+  as_tsibble(index = Date)
+
+filled_sp500_df |>
+  model(
+    STL(SP500 ~ trend(window = 48) +
+                   season(window = "periodic"),
+    robust = TRUE)) |>
+  components() |>
+  autoplot()
+```
+In this TS decomposition of the S&P500 stock value, we see that with a four year window, there is a high frequency yealry season and a gradual positive trend as the white noise of the series outlines the 2008 economic recession as well as the recent effects of tarrifs on the US economy at the very end of the series. 
+
+```{r}
+decomposed_model <- filled_sp500_df |>
+  model(classical_decomposition(SP500, type = "additive"))
+components <- decomposed_model %>%
+  components()
+components %>%
+  autoplot() +
+  labs(y = "S&P500 (USD)",
+       x = "Date",
+       title = "Classical Additive Decomposition of S&P500")
+```
+
+This classical method of decomposition provides similar components of trend and season as the STL method, with less pronounced variation in the random competent. Seasons also seems to be more frequent in cycle. 
+
+```{r}
+fit <- sp500_df |>
+  model(drift = RW(SP500 ~drift()))
+fit |>
+  forecast(h = "40 years") |>
+  autoplot(sp500_df)
+```
+As the trend of the decomposition resembles a random walk, the reproduction of a RW model in this forecast produces a consistent trend with wide margins of confidence at 80 and 95%. 
+
+```{r}
+split_date <- as.Date("2150-01-01")
+train_sp500 <- sp500_df |> filter(Date <= split_date)
+test_sp500 <- sp500_df |> filter(Date > split_date)
+
+fit <- train_sp500 |>
+  model(seasonal_model = SNAIVE(SP500 ~ lag("year")))
+fit |> gg_tsresiduals()
+
+fc <- fit |>
+  forecast(new_data = anti_join(sp500_df, train_sp500))
+fc |> autoplot(sp500_df)
+
+bind_rows(
+  accuracy(fit),
+  accuracy(fc, sp500_df)
+) |>
+  select(-.model)
+```
+
+
+# 4 Conclusion
+US UNEMPLOYMENT:  The unemployment rate data is non-stationary with very low scale seasonality and nearly ideal residuals, excluding those for the 2008 sub-prime mortgage crisis and the even more significant COVID-19 pandemic starting in early 2020.  The plots for Unemployment and Earnings suggest a strong negative correlation that would be interesting to explore further. As far as which model is best, I would choose the STL Decomposition model since it had the best residuals in my opinion.  The others were close, except for the last model with its relativey extreme innovation residuals.  
+
+EARNINGS: Average Earnings is non-stationary with no obvious seasonality and trends up. There are obvious troughs in the dataset due notably in 2008 during the subprime housing mortgage crisis and again in 2021 during the Covid Pandemic. Interestingly enough both employment and earns have similar inverted trends. That is when employment rises it seems weekly earnings drops.
+
+SP500: S&P is non-stationary with non-explicit seasonality with a pronounced positive trend. When examining STL decomposition, we can identify anomalies around the 2008 recession and the recent drop during 2025 as an effect of trade tariffs. The STL decomposition provides insight with the random component, while the seasonal naive model produces a normal distribution of residuals and strong correlations at lags within the first 12 years of the dataset.  
+
+# 5 Team Contributions
+Name                   Data Pipeline                                    Time
+Michael T. Johnson     earnings, project management.                    10.5 Hours 
+Wade Lail              unemployment data analysis & collaboration       10.5 hours
+Adam Holtzlander       S&P data analysis                                9 hours
 
