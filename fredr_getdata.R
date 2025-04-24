@@ -1,3 +1,6 @@
+library(shiny)
+library(forecast)
+library(ggplot2)
 library(fredr)
 library(tidyverse)
 library(fredr)
@@ -22,4 +25,17 @@ get_fred_data <- function(series_id) {
 # Pull all data and bind into one dataframe
 fred_data <- map_df(series_ids, get_fred_data)
 
+
+# Separate dataframe in to subsets
+unrate_data <- fred_data |>
+  filter(series_id == "UNRATE") |>
+  select(-realtime_start, -realtime_end, -series_id)
+
+sp500_data <- fred_data |>
+  filter(series_id == "SP500") |>
+  select(-realtime_start, -realtime_end, -series_id)
+
+earnings_data <- fred_data |>
+  filter(series_id == "AHETPI") |>
+  select(-realtime_start, -realtime_end, -series_id)
 
