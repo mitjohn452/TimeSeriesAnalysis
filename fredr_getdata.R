@@ -39,3 +39,47 @@ earnings_data <- fred_data |>
   filter(series_id == "AHETPI") |>
   select(-realtime_start, -realtime_end, -series_id)
 
+ui <- fluidPage(
+  titlePanel("Time Series Analysis Final Project"),
+  
+  sidebarLayout(
+    
+    # Sidebar with radio buttons
+    sidebarPanel(
+      
+      radioButtons("model", "Choose a Forecast Model:",
+                   choices = c("ARIMA" = "arima",
+                               "Random Walk" = "rw",
+                               "Seasonal Naive" = "snaive"),
+                   selected = "arima")
+    ),
+    
+    mainPanel(
+      plotOutput("forecastPlot")
+    )
+  )
+)
+
+selected_data <- unrate_data$value # CHANGE FOR DIFFERENT TIME SERIES DATA
+
+server <- function(input, output) {
+  
+  output$forecastPlot <- renderPlot({
+    
+    fit <- switch(input$model, 
+                 "rw" = rwf(selected_data, drift = FALSE),
+                 "arima" = auto.arima(selected_data),
+                 "snaive" = snaive(selected_data))
+    
+    fc <- forecast(fit, h = 12)
+    
+    autoplot(fc) + 
+      ggtitle(paste("Forecast using", toupper(input$model))) +
+      theme_classic()
+  })
+}
+
+shinyApp(ui = ui, server = server)
+
+
+
