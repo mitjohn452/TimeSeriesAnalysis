@@ -19,7 +19,7 @@ get_fred_data <- function(series_id) {
   fredr(
     series_id = series_id,
     observation_start = as.Date("2015-01-01"),
-    observation_end = as.Date("2024-12-01")
+    observation_end = as.Date("2024-12-02")
   ) %>%
     mutate(series_id = series_id)
 }
