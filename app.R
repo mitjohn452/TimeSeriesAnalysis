@@ -53,7 +53,7 @@ ui <- fluidPage(
                               "Avg Hourly Earnings" = "AHETPI",
                               "Consumer Sentiment" = "UMCSENT"),
                   selected = "UNRATE"),
-      sliderInput("horizon", "Forecast Horizon (months):", min = 1, max = 12, value = 5)  # ✅ Moved here
+      sliderInput("horizon", "Forecast Horizon (months):", min = 1, max = 12, value = 5)
     ),
     mainPanel(
       plotOutput("forecastPlot")
