@@ -28,9 +28,9 @@ fred_data <- map_df(series_ids, get_fred_data)
 # Split out the SP500 DATA and filter only to the last day of each month
 sp500_data <- fred_data %>%
   filter(series_id == "SP500") %>%
+  drop_na() %>%
   group_by(year = year(date), month = month(date)) %>%
   filter(date == max(date)) %>%
-  drop_na() %>%
   ungroup()
 # Subset of other monthly data
 other_data <- fred_data %>%
